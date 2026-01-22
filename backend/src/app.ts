@@ -21,11 +21,11 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: allowedOrigins,
-    credentials: true, // allow credentials from client (cookies, authorization headers, etc.)
+    credentials: true, 
   })
 );
 
-app.use(express.json()); // parses incoming JSON request bodies and makes them available as req.body in your route handlers
+app.use(express.json()); 
 app.use(clerkMiddleware());
 
 app.get("/health", (req, res) => {
@@ -37,10 +37,8 @@ app.use("/api/chats", chatRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/users", userRoutes);
 
-// error handlers must come after all the routes and other middlewares so they can catch errors passed with next(err) or thrown inside async handlers.
 app.use(errorHandler);
 
-// serve frontend in production
 if (process.env.NODE_ENV === "production") {
   app.use(express.static(path.join(__dirname, "../../web/dist")));
 
