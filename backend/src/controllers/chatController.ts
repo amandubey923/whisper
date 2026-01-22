@@ -1,52 +1,77 @@
-import type { NextFunction, Request, Response } from "express";
+import type { NextFunction, Response } from "express";
 import type { AuthRequest } from "../middleware/auth";
-import { User } from "../models/User";
-import { clerkClient, getAuth } from "@clerk/express";
+import { Chat } from "../models/Chat";
+import { Types } from "mongoose";
 
-export async function getMe(req: AuthRequest, res: Response, next: NextFunction) {
+export async function getChats(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const userId = req.userId;
 
-    const user = await User.findById(userId);
+    const chats = await Chat.find({ participants: userId })
+      .populate("participants", "name email avatar")
+      .populate("lastMessage")
+      .sort({ lastMessageAt: -1 });
 
-    if (!user) {
-      res.status(404).json({ message: "User not found" });
-      return;
-    }
+    const formattedChats = chats.map((chat) => {
+      const otherParticipant = chat.participants.find((p) => p._id.toString() !== userId);
 
-    res.status(200).json(user);
+      return {
+        _id: chat._id,
+        participant: otherParticipant ?? null,
+        lastMessage: chat.lastMessage,
+        lastMessageAt: chat.lastMessageAt,
+        createdAt: chat.createdAt,
+      };
+    });
+
+    res.json(formattedChats);
   } catch (error) {
     res.status(500);
     next(error);
   }
 }
 
-export async function authCallback(req: Request, res: Response, next: NextFunction) {
+export async function getOrCreateChat(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const { userId: clerkId } = getAuth(req);
+    const userId = req.userId;
+    const { participantId } = req.params;
 
-    if (!clerkId) {
-      res.status(401).json({ message: "Unauthorized" });
+    if (!participantId) {
+      res.status(400).json({ message: "Participant ID is required" });
       return;
     }
 
-    let user = await User.findOne({ clerkId });
-
-    if (!user) {
-      // get user info from clerk and save to db
-      const clerkUser = await clerkClient.users.getUser(clerkId);
-
-      user = await User.create({
-        clerkId,
-        name: clerkUser.firstName
-          ? `${clerkUser.firstName} ${clerkUser.lastName || ""}`.trim()
-          : clerkUser.emailAddresses[0]?.emailAddress?.split("@")[0],
-        email: clerkUser.emailAddresses[0]?.emailAddress,
-        avatar: clerkUser.imageUrl,
-      });
+    if (!Types.ObjectId.isValid(participantId)) {
+      return res.status(400).json({ message: "Invalid participant ID" });
     }
 
-    res.json(user);
+    if (userId === participantId) {
+      res.status(400).json({ message: "Cannot create chat with yourself" });
+      return;
+    }
+
+    // check if chat already exists
+    let chat = await Chat.findOne({
+      participants: { $all: [userId, participantId] },
+    })
+      .populate("participants", "name email avatar")
+      .populate("lastMessage");
+
+    if (!chat) {
+      const newChat = new Chat({ participants: [userId, participantId] });
+      await newChat.save();
+      chat = await newChat.populate("participants", "name email avatar");
+    }
+
+    const otherParticipant = chat.participants.find((p: any) => p._id.toString() !== userId);
+
+    res.json({
+      _id: chat._id,
+      participant: otherParticipant ?? null,
+      lastMessage: chat.lastMessage,
+      lastMessageAt: chat.lastMessageAt,
+      createdAt: chat.createdAt,
+    });
   } catch (error) {
     res.status(500);
     next(error);
